@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title> ChatBox</title>
+</head>
+
+<body>
+  <h2> ChatBox</h2>
+  <div>
+    <label>server URL: <input id="serverUrl" value="http://localhost:4000"></label>
+    <button onclick="connectWS()">connect</button>
+    <button onclick="disconnectWS()">disconnect</button>
+    <span id="wsStatus">Disconnected</span>
+  </div>
+  <div>
+    <h3>register</h3>
+    <input id="regUsername" placeholder="username">
+    <input id="regEmail" placeholder="email">
+    <input id="regPassword" placeholder="password" type="password">
+    <button onclick="register()">Register</button>
+    <span id="registerStatus"></span>
+  </div>
+  <div>
+    <h3>login</h3>
+    <input id="email" placeholder="email">
+    <input id="password" placeholder="password" type="password">
+    <button onclick="login()">Login</button>
+    <button onclick="logout()">Logout</button>
+    <span id="authStatus"></span>
+  </div>
+  <div>
+    <h3>authenticate socket</h3>
+    <button onclick="authenticateSocket()">authenticate</button>
+  </div>
+  <div>
+    <h3>send message</h3>
+    <input id="receiverId" placeholder="receiver ID" type="number">
+    <input id="messageText" placeholder="message">
+    <button onclick="sendMessage()">send</button>
+    <button onclick="getConversation()">Get Conversation</button>
+
+  </div>
+  <div>
+    <h3>mark message as read/unread</h3>
+    <input id="messageId" placeholder="message ID" type="number">
+    <button onclick="markAsRead()">mark as read</button>
+    <button onclick="markAsUnread()">mark as unread</button>
+    <button onclick="deleteForMe()">delete for me</button>
+    <button onclick="deleteForAll()">delete for all</button>
+
+  </div>
+  <div>
+    <h3>chat history</h3>
+    <div id="chatHistory"
+      style="background:#fafafa;border:1px solid #ccc;min-height:120px;max-height:200px;overflow-y:auto;padding:8px;margin-bottom:10px;">
+    </div>
+  </div>
+  <div>
+    <h3>log</h3>
+    <pre id="log" style="background:#eee;min-height:100px;"></pre>
+  </div>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    let socket = null;
+    let authToken = null;
+    let currentUserId = null;
+    let socketAuthenticated = false;
+
+    function log(msg) {
+      document.getElementById('log').textContent += msg + '\n';
+    }
+    function connectWS() {
+      const url = document.getElementById('serverUrl').value;
+      socket = io(url);
+      socket.on('connect', () => {
+        document.getElementById('wsStatus').textContent = 'Connected';
+        log('WebSocket connected');
+      });
+      socket.on('disconnect', () => {
+        document.getElementById('wsStatus').textContent = 'Disconnected';
+        log('WebSocket disconnected');
+      });
+      socket.on('auth_error', d => {
+        log('Auth error: ' + d.message);
+        socketAuthenticated = false;
+      });
+      socket.on('authenticated', d => {
+        log('Socket authenticated successfully');
+        socketAuthenticated = true;
+        document.getElementById('authStatus').textContent = 'Socket authenticated';
+      });
+      socket.on('register_success', d => {
+        log('Registration successful! User: ' + d.user.username);
+        document.getElementById('registerStatus').textContent = 'Registration successful! Please log in.';
+        authToken = null;
+        currentUserId = null;
+      });
+      socket.on('register_error', d => {
+        log('Registration failed: ' + d.message);
+        document.getElementById('registerStatus').textContent = 'Registration failed: ' + d.message;
+      });
+      socket.on('login_success', d => {
+        log('Login successful! User: ' + d.user.username);
+        document.getElementById('authStatus').textContent = 'Login successful!';
+        authToken = d.token;
+        currentUserId = d.user.id;
+      });
+      socket.on('login_error', d => {
+        log('Login failed: ' + d.message);
+        document.getElementById('authStatus').textContent = 'Login failed: ' + d.message;
+      });
+      socket.on('new_message', d => log('New message: ' + d.message));
+      socket.on('message_sent', d => log('Message sent, id: ' + d.id));
+      socket.on('conversation_updated', d => {
+        log('Conversation updated, messages: ' + d.messages.length);
+        renderChatHistory(d.messages);
+      });
+      socket.on('message_read', d => {
+        log('Message ' + d.messageId + ' marked as read by user ' + d.readBy);
+      });
+      socket.on('message_deleted', d => {
+        log('Message ' + d.messageId + ' deleted');
+      });
+      socket.on('error', d => log('Socket error: ' + d.message));
+    }
+
+    function disconnectWS() {
+      if (socket) socket.disconnect();
+      document.getElementById('wsStatus').textContent = 'Disconnected';
+    }
+
+    function register() {
+      const username = document.getElementById('regUsername').value;
+      const email = document.getElementById('regEmail').value;
+      const password = document.getElementById('regPassword').value;
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!username || !email || !password) {
+        document.getElementById('registerStatus').textContent = 'All fields required';
+        return log('All registration fields required');
+      }
+      socket.emit('register', { username, email, password });
+      log('Sent register event');
+    }
+
+    function login() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!email || !password) {
+        document.getElementById('authStatus').textContent = 'Email and password required';
+        return log('Email and password required');
+      }
+      socket.emit('login', { email, password });
+      log('Sent login event');
+    }
+
+    function logout() {
+      authToken = null;
+      currentUserId = null;
+      socketAuthenticated = false;
+      document.getElementById('authStatus').textContent = 'Logged out';
+      log('Logged out');
+      // Optionally, emit a logout event to the server:
+      if (socket && socket.connected) {
+        socket.emit('logout');
+      }
+    }
+
+    function authenticateSocket() {
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!authToken) return log('No auth token, login first');
+      socketAuthenticated = false;
+      socket.emit('authenticate', authToken);
+      log('Sent authenticate event');
+    }
+
+    function sendMessage() {
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!socketAuthenticated) return log('Socket not authenticated');
+      const receiverId = document.getElementById('receiverId').value;
+      const message = document.getElementById('messageText').value;
+      if (!receiverId || !message) return log('Receiver ID and message required');
+      socket.emit('send_message', { receiverId: parseInt(receiverId), message });
+      log('Sent message to ' + receiverId);
+    }
+
+    function getConversation() {
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!socketAuthenticated) return log('Socket not authenticated');
+      const otherUserId = document.getElementById('receiverId').value;
+      if (!otherUserId) return log('Enter receiver ID first');
+      socket.emit('get_conversation', { otherUserId: parseInt(otherUserId) });
+      log('Requesting conversation with user ' + otherUserId);
+      // Mark all messages from other user as read
+      socket.emit('mark_all_read', { otherUserId: parseInt(otherUserId) });
+      log('Marking all messages from user ' + otherUserId + ' as read');
+    }
+
+    function markAsRead() {
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!socketAuthenticated) return log('Socket not authenticated');
+      const messageId = document.getElementById('messageId').value;
+      if (!messageId) return log('Enter message ID');
+      socket.emit('mark_read', { messageId: parseInt(messageId) });
+      log('Marking message ' + messageId + ' as read');
+    }
+
+    function markAsUnread() {
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!socketAuthenticated) return log('Socket not authenticated');
+      const messageId = document.getElementById('messageId').value;
+      if (!messageId) return log('Enter message ID');
+      socket.emit('mark_unread', { messageId: parseInt(messageId) });
+      log('Marking message ' + messageId + ' as unread');
+    }
+
+    function deleteForMe() {
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!socketAuthenticated) return log('Socket not authenticated');
+      const messageId = document.getElementById('messageId').value;
+      if (!messageId) return log('Enter message ID');
+      socket.emit('delete_for_me', { messageId: parseInt(messageId) });
+      log('Requesting delete for me for message ' + messageId);
+    }
+
+    function deleteForAll() {
+      if (!socket || !socket.connected) return log('Not connected');
+      if (!socketAuthenticated) return log('Socket not authenticated');
+      const messageId = document.getElementById('messageId').value;
+      if (!messageId) return log('Enter message ID');
+      socket.emit('delete_for_all', { messageId: parseInt(messageId) });
+      log('Requesting delete for all for message ' + messageId);
+    }
+
+    function renderChatHistory(messages) {
+      const panel = document.getElementById('chatHistory');
+      panel.innerHTML = '';
+      if (!messages || !messages.length) {
+        panel.textContent = 'No messages.';
+        return;
+      }
+      messages.forEach(msg => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '6px';
+        const readStatus = msg.read ? '(read)' : '(unread)';
+        div.textContent = `[${new Date(msg.createdAt).toLocaleString()}] (ID: ${msg.id}) ${msg.sender && msg.sender.username ? msg.sender.username : 'User ' + msg.senderId}: ${msg.message} ${readStatus}`;
+        panel.appendChild(div);
+      });
+      panel.scrollTop = panel.scrollHeight;
+    }
+  </script>
+</body>
+</html>
