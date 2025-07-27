@@ -73,6 +73,3 @@ A real-time 1:1 chat application built with Node.js, Express, Socket.io, and Seq
 - `middleware/` — Authentication middleware
 - `public/` — Demo frontend
 - `config/` — Database and environment config
-
-## License
-MIT 
